@@ -2,6 +2,7 @@
 
 import tkinter
 import customtkinter
+from tkinter import filedialog
 from typing import Callable, Optional
 
 
@@ -13,19 +14,22 @@ class MainWindow:
         on_test_triggered: Optional[Callable] = None,
         on_scan_requested: Optional[Callable] = None,
         on_write_config: Optional[Callable] = None,
-        on_copy_context: Optional[Callable] = None
+        on_copy_context: Optional[Callable] = None,
+        on_target_config_selected: Optional[Callable] = None
     ):
         self.on_test_triggered = on_test_triggered
         self.on_scan_requested = on_scan_requested
         self.on_write_config = on_write_config
         self.on_copy_context = on_copy_context
+        self.on_target_config_selected = on_target_config_selected
 
         self._selected_device_id: Optional[int] = None
         self._devices: list = []
+        self._target_config_path: Optional[str] = None
 
         self.root = customtkinter.CTk()
         self.root.title("DSP-Agent-Aligner")
-        self.root.geometry("900x700")
+        self.root.geometry("900x800")
 
         self._build_widgets()
         self._bind_events()
@@ -35,6 +39,7 @@ class MainWindow:
         self.root.grid_rowconfigure(0, weight=0)
         self.root.grid_rowconfigure(1, weight=1)
         self.root.grid_rowconfigure(2, weight=0)
+        self.root.grid_rowconfigure(3, weight=0)
         self.root.grid_columnconfigure(0, weight=1)
         self.root.grid_columnconfigure(1, weight=1)
 
@@ -47,7 +52,8 @@ class MainWindow:
 
         self._build_device_selection_area(row=1, column=0)
         self._build_agent_context_area(row=1, column=1)
-        self._build_control_area(row=2, column=0, columnspan=2)
+        self._build_target_project_area(row=2, column=0, columnspan=2)
+        self._build_control_area(row=3, column=0, columnspan=2)
 
     def _build_device_selection_area(self, row: int, column: int):
         """Build device selection area with CTkOptionMenu."""
@@ -113,7 +119,7 @@ class MainWindow:
 
         self.write_config_button = customtkinter.CTkButton(
             button_container,
-            text="写入 config.py",
+            text="写入目标配置",
             command=self._on_write_config_clicked,
             width=140
         )
@@ -126,6 +132,37 @@ class MainWindow:
             width=140
         )
         self.copy_context_button.pack(side="left", padx=5)
+
+    def _build_target_project_area(self, row: int, column: int, columnspan: int):
+        """Build target project mount area."""
+        self.target_frame = customtkinter.CTkFrame(self.root)
+        self.target_frame.grid(row=row, column=column, columnspan=columnspan, pady=10, padx=10, sticky="ew")
+        self.target_frame.grid_columnconfigure(1, weight=1)
+
+        target_header = customtkinter.CTkLabel(
+            self.target_frame,
+            text="目标项目挂载区",
+            font=("Arial", 14, "bold")
+        )
+        target_header.grid(row=0, column=0, columnspan=2, pady=(10, 5))
+
+        self.select_config_button = customtkinter.CTkButton(
+            self.target_frame,
+            text="📂 选择目标项目 config.py",
+            command=self._on_select_target_config,
+            fg_color="#9B59B6",
+            hover_color="#8E44AD",
+            width=200
+        )
+        self.select_config_button.grid(row=1, column=0, pady=10, padx=10)
+
+        self.target_path_label = customtkinter.CTkLabel(
+            self.target_frame,
+            text="未选择目标配置文件",
+            font=("Arial", 12),
+            text_color="#7F8C8D"
+        )
+        self.target_path_label.grid(row=1, column=1, pady=10, padx=10, sticky="w")
 
     def _build_control_area(self, row: int, column: int, columnspan: int):
         """Build control area with scan button and status."""
@@ -194,6 +231,19 @@ class MainWindow:
         if self.on_test_triggered:
             self.on_test_triggered(self._selected_device_id)
 
+    def _on_select_target_config(self):
+        """Handle select target config button click."""
+        file_path = filedialog.askopenfilename(
+            title="选择目标项目配置文件",
+            filetypes=[("Python Files", "*.py"), ("All Files", "*.*")]
+        )
+        if file_path:
+            self._target_config_path = file_path
+            display_path = file_path if len(file_path) <= 50 else "..." + file_path[-47:]
+            self.target_path_label.configure(text=display_path, text_color="#2ECC71")
+            if self.on_target_config_selected:
+                self.on_target_config_selected(file_path)
+
     def _on_write_config_clicked(self):
         """Handle write config button click."""
         if self.on_write_config:
@@ -255,6 +305,10 @@ class MainWindow:
         """Update schema textbox with JSON content."""
         self.schema_textbox.delete("1.0", "end")
         self.schema_textbox.insert("1.0", schema_json)
+
+    def get_target_config_path(self) -> Optional[str]:
+        """Get the selected target config file path."""
+        return self._target_config_path
 
     def set_status(self, message: str):
         """Update status message."""

@@ -16,12 +16,14 @@ class DAAApplication:
         self.agent_context = AgentContext()
         self.config_patcher = ConfigPatcher()
         self._selected_device_id: int = -1
+        self._target_config_path: str = ""
 
         self.window = MainWindow(
             on_test_triggered=self._on_test_triggered,
             on_scan_requested=self._on_scan_requested,
             on_write_config=self._on_write_config,
-            on_copy_context=self._on_copy_context
+            on_copy_context=self._on_copy_context,
+            on_target_config_selected=self._on_target_config_selected
         )
 
         self._initial_scan()
@@ -92,10 +94,19 @@ class DAAApplication:
         schema_json = self.agent_context.get_schema_json()
         self.window.update_schema_display(schema_json)
 
+    def _on_target_config_selected(self, file_path: str):
+        """Handle target config file selection."""
+        self._target_config_path = file_path
+        self.window.set_status(f"已挂载目标配置: {pathlib.Path(file_path).name}")
+
     def _on_write_config(self):
-        """Handle write config request - write selected device to config.py."""
+        """Handle write config request - write selected device to target config.py."""
+        if not self._target_config_path:
+            self.window.set_status("错误：请先选择目标配置文件")
+            return
+
         if self._selected_device_id < 0:
-            self.window.set_status("请先播放测试音选择设备")
+            self.window.set_status("错误：请先播放测试音选择设备")
             return
 
         selected_device = self.agent_context.get_selected_device()
@@ -103,33 +114,30 @@ class DAAApplication:
             self.window.set_status("设备信息未找到")
             return
 
-        config_path = pathlib.Path("config.py")
+        config_path = pathlib.Path(self._target_config_path)
 
         try:
-            success = self.config_patcher.patch_constant(
+            success = self.config_patcher.patch_dict_constant(
                 config_path,
-                "TARGET_DEVICE_ID",
+                "PYO_CONFIG",
+                "device",
                 selected_device["device_id"]
             )
 
             if success:
-                self.config_patcher.patch_constant(
+                self.config_patcher.patch_dict_constant(
                     config_path,
-                    "SAMPLE_RATE",
+                    "PYO_CONFIG",
+                    "sample_rate",
                     selected_device["native_sample_rate"]
                 )
-                self.window.set_status(f"已写入 config.py (ID: {selected_device['device_id']})")
+                self.window.set_status(f"成功写入 {config_path.name} (device={selected_device['device_id']})")
             else:
-                existing_value = self.config_patcher.read_constant(config_path, "TARGET_DEVICE_ID")
-                if existing_value is None:
-                    with open(config_path, "a", encoding="utf-8") as f:
-                        f.write(f"\nTARGET_DEVICE_ID = {selected_device['device_id']}\n")
-                        f.write(f"SAMPLE_RATE = {selected_device['native_sample_rate']}\n")
-                    self.window.set_status("已创建 config.py")
-                else:
-                    self.window.set_status("配置写入失败")
+                self.window.set_status("配置写入失败")
+        except ValueError as e:
+            self.window.set_status(f"写入错误: {str(e)[:40]}")
         except Exception as e:
-            self.window.set_status(f"写入错误: {str(e)[:30]}")
+            self.window.set_status(f"写入异常: {str(e)[:40]}")
 
     def _on_copy_context(self):
         """Handle copy context request - clipboard already handled by UI."""
