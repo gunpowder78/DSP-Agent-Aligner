@@ -53,24 +53,11 @@ class SafeAudioTester:
     def run(self, duration_frames: int) -> bool:
         """Execute the audio test sequence."""
         try:
-            self._stream = sounddevice.OutputStream(
-                device=self.device_id,
-                samplerate=self.sample_rate,
-                channels=self.num_channels,
-                callback=self.audio_callback,
-                blocksize=256
-            )
-            self._stream.start()
-            self._stream.wait()
-            return True
-        except sounddevice.CallbackStop:
+            sounddevice.play(self.waveform, samplerate=self.sample_rate, device=self.device_id)
+            sounddevice.wait()
             return True
         except Exception:
             return False
-        finally:
-            if self._stream:
-                self._stream.close()
-            self._stream = None
 
 
 class AudioEngine:
