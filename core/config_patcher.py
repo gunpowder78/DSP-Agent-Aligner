@@ -15,14 +15,19 @@ class ConfigPatcher:
             source_code = file_path.read_text(encoding="utf-8")
             tree = ast.parse(source_code)
 
+            found = False
             for node in ast.walk(tree):
                 if isinstance(node, ast.Assign):
                     for target in node.targets:
                         if isinstance(target, ast.Name) and target.id == target_name:
+                            found = True
                             if isinstance(node.value, ast.Constant):
                                 node.value.value = new_value
                             elif isinstance(node.value, ast.Num):
                                 node.value.n = new_value
+
+            if not found:
+                return False
 
             modified_code = ast.unparse(tree)
             file_path.write_text(modified_code, encoding="utf-8")
@@ -49,7 +54,8 @@ class ConfigPatcher:
         except Exception:
             return None
 
-    @staticmethod    def validate_syntax(file_path: pathlib.Path) -> bool:
+    @staticmethod
+    def validate_syntax(file_path: pathlib.Path) -> bool:
         """Validate Python source file syntax."""
         try:
             source_code = file_path.read_text(encoding="utf-8")

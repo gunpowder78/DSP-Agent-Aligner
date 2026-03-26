@@ -8,32 +8,36 @@ from core.audio_engine import AudioEngine
 
 MOCK_DEVICE_LIST = [
     {
-        "name": "Microsoft Sound Mapper - Input",
-        "hostapi": 0,
+        "device_id": 0,
+        "device_name": "Microsoft Sound Mapper - Input",
+        "native_sample_rate": 44100.0,
         "max_input_channels": 2,
         "max_output_channels": 0,
-        "default_samplerate": 44100.0
+        "is_duplex_supported": False
     },
     {
-        "name": "Speakers (Realtek Audio)",
-        "hostapi": 1,
+        "device_id": 1,
+        "device_name": "Speakers (Realtek Audio)",
+        "native_sample_rate": 48000.0,
         "max_input_channels": 0,
         "max_output_channels": 2,
-        "default_samplerate": 48000.0
+        "is_duplex_supported": False
     },
     {
-        "name": "Microphone Array (Focusrite)",
-        "hostapi": 2,
+        "device_id": 2,
+        "device_name": "Microphone Array (Focusrite)",
+        "native_sample_rate": 96000.0,
         "max_input_channels": 4,
         "max_output_channels": 0,
-        "default_samplerate": 96000.0
+        "is_duplex_supported": False
     },
     {
-        "name": "Universal Audio Apollo Twin",
-        "hostapi": 2,
+        "device_id": 3,
+        "device_name": "Universal Audio Apollo Twin",
+        "native_sample_rate": 192000.0,
         "max_input_channels": 18,
         "max_output_channels": 20,
-        "default_samplerate": 192000.0
+        "is_duplex_supported": True
     }
 ]
 
@@ -134,6 +138,5 @@ class TestAgentContextSchema:
         context.generate_schema()
 
         output_devices = context.get_output_devices()
-        assert len(output_devices) == 1
-        assert output_devices[0]["max_output_channels"] > 0
-        assert output_devices[0]["max_input_channels"] == 0
+        assert len(output_devices) == 2
+        assert all(d["max_output_channels"] > 0 for d in output_devices)

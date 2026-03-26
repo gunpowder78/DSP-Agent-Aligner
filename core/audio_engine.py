@@ -33,7 +33,16 @@ class SafeAudioTester:
             raise sounddevice.CallbackStop()
 
         frames_to_copy = min(frames, remaining_frames)
-        outdata[:frames_to_copy] = self.waveform[self.current_frame_index:self.current_frame_index + frames_to_copy]
+        chunk = self.waveform[self.current_frame_index:self.current_frame_index + frames_to_copy]
+
+        if self.num_channels == 1:
+            outdata[:frames_to_copy, 0] = chunk
+        else:
+            if chunk.ndim == 1:
+                outdata[:frames_to_copy, 0] = chunk
+                outdata[:frames_to_copy, 1] = chunk
+            else:
+                outdata[:frames_to_copy] = chunk
 
         if frames_to_copy < frames:
             outdata[frames_to_copy:] = 0

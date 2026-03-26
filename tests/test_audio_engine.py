@@ -39,11 +39,9 @@ MOCK_DEVICE_LIST = [
 
 
 class TestAudioEngineDeviceScanning:
-    """Test suite for AudioEngine device scanning with mocked hardware."""
 
     @patch("sounddevice.query_devices")
     def test_scan_devices_returns_structured_list(self, mock_query):
-        """Test that scan_devices returns properly structured device list."""
         mock_query.return_value = MOCK_DEVICE_LIST
 
         engine = AudioEngine()
@@ -56,7 +54,6 @@ class TestAudioEngineDeviceScanning:
 
     @patch("sounddevice.query_devices")
     def test_wasapi_half_duplex_detection(self, mock_query):
-        """Test that 0-channel WASAPI devices are correctly identified as half-duplex."""
         mock_query.return_value = MOCK_DEVICE_LIST
 
         engine = AudioEngine()
@@ -69,7 +66,6 @@ class TestAudioEngineDeviceScanning:
 
     @patch("sounddevice.query_devices")
     def test_full_duplex_professional_device(self, mock_query):
-        """Test that professional interface is detected as full-duplex."""
         mock_query.return_value = MOCK_DEVICE_LIST
 
         engine = AudioEngine()
@@ -82,7 +78,6 @@ class TestAudioEngineDeviceScanning:
 
     @patch("sounddevice.query_devices")
     def test_get_device_by_name_pattern(self, mock_query):
-        """Test device lookup by name pattern matching."""
         mock_query.return_value = MOCK_DEVICE_LIST
 
         engine = AudioEngine()
@@ -94,7 +89,6 @@ class TestAudioEngineDeviceScanning:
 
     @patch("sounddevice.query_devices")
     def test_get_device_by_name_case_insensitive(self, mock_query):
-        """Test name pattern matching is case insensitive."""
         mock_query.return_value = MOCK_DEVICE_LIST
 
         engine = AudioEngine()
@@ -106,10 +100,8 @@ class TestAudioEngineDeviceScanning:
 
 
 class TestSafeAudioTesterCallback:
-    """Test suite for SafeAudioTester callback boundary conditions."""
 
     def test_callback_zero_padding_at_boundary(self):
-        """Test that callback zero-pads when waveform is exhausted."""
         waveform = numpy.zeros(512, dtype=numpy.float32)
         tester = SafeAudioTester(
             device_id=0,
@@ -124,7 +116,6 @@ class TestSafeAudioTesterCallback:
         assert numpy.all(outdata == 0)
 
     def test_callback_raises_callback_stop_when_exhausted(self):
-        """Test that CallbackStop is raised when waveform is fully consumed."""
         import sounddevice
 
         waveform = numpy.zeros(256, dtype=numpy.float32)
@@ -143,7 +134,6 @@ class TestSafeAudioTesterCallback:
             tester.audio_callback(outdata, 256, None, None)
 
     def test_callback_partial_consumption(self):
-        """Test callback correctly slices and advances frame index."""
         t = numpy.linspace(0, 1, 1024, False)
         waveform = (numpy.sin(2 * numpy.pi * 440 * t)).astype(numpy.float32)
 
@@ -161,7 +151,6 @@ class TestSafeAudioTesterCallback:
         assert numpy.array_equal(outdata.flatten(), waveform[:256])
 
     def test_callback_stereo_expansion(self):
-        """Test callback correctly handles stereo expansion."""
         mono_waveform = numpy.ones(512, dtype=numpy.float32)
 
         tester = SafeAudioTester(
