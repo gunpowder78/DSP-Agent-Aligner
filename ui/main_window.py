@@ -6,52 +6,148 @@ from typing import Callable, Optional
 
 
 class MainWindow:
-    """Main GUI window - pure state reflector pattern, no hardware calls permitted."""
+    """Main GUI window - pure state reflector pattern with Grid layout."""
 
-    def __init__(self, on_test_triggered: Optional[Callable] = None, on_scan_requested: Optional[Callable] = None):
+    def __init__(
+        self,
+        on_test_triggered: Optional[Callable] = None,
+        on_scan_requested: Optional[Callable] = None,
+        on_write_config: Optional[Callable] = None,
+        on_copy_context: Optional[Callable] = None
+    ):
         self.on_test_triggered = on_test_triggered
         self.on_scan_requested = on_scan_requested
+        self.on_write_config = on_write_config
+        self.on_copy_context = on_copy_context
+
+        self._selected_device_id: Optional[int] = None
+        self._devices: list = []
 
         self.root = customtkinter.CTk()
         self.root.title("DSP-Agent-Aligner")
-        self.root.geometry("800x600")
+        self.root.geometry("900x700")
 
         self._build_widgets()
         self._bind_events()
 
     def _build_widgets(self):
-        """Build GUI widgets."""
-        self.title_label = customtkinter.CTkLabel(self.root, text="DSP Agent Aligner", font=("Arial", 24))
-        self.title_label.pack(pady=20)
+        """Build GUI widgets using Grid layout."""
+        self.root.grid_rowconfigure(0, weight=0)
+        self.root.grid_rowconfigure(1, weight=1)
+        self.root.grid_rowconfigure(2, weight=0)
+        self.root.grid_columnconfigure(0, weight=1)
+        self.root.grid_columnconfigure(1, weight=1)
 
-        self.device_frame = customtkinter.CTkFrame(self.root)
-        self.device_frame.pack(pady=10, padx=20, fill="both", expand=True)
-
-        self.device_label = customtkinter.CTkLabel(self.device_frame, text="Audio Devices", font=("Arial", 16))
-        self.device_label.pack(pady=10)
-
-        self.device_listbox = customtkinter.CTkTextbox(self.device_frame, height=200)
-        self.device_listbox.pack(pady=10, padx=10, fill="both", expand=True)
-
-        self.button_frame = customtkinter.CTkFrame(self.root)
-        self.button_frame.pack(pady=20)
-
-        self.scan_button = customtkinter.CTkButton(
-            self.button_frame,
-            text="Scan Devices",
-            command=self._on_scan_clicked
+        self.title_label = customtkinter.CTkLabel(
+            self.root,
+            text="DSP Agent Aligner",
+            font=("Arial", 28, "bold")
         )
-        self.scan_button.pack(side="left", padx=10)
+        self.title_label.grid(row=0, column=0, columnspan=2, pady=20)
+
+        self._build_device_selection_area(row=1, column=0)
+        self._build_agent_context_area(row=1, column=1)
+        self._build_control_area(row=2, column=0, columnspan=2)
+
+    def _build_device_selection_area(self, row: int, column: int):
+        """Build device selection area with CTkOptionMenu."""
+        self.device_frame = customtkinter.CTkFrame(self.root)
+        self.device_frame.grid(row=row, column=column, padx=10, pady=10, sticky="nsew")
+        self.device_frame.grid_rowconfigure(1, weight=1)
+        self.device_frame.grid_columnconfigure(0, weight=1)
+
+        device_header = customtkinter.CTkLabel(
+            self.device_frame,
+            text="设备选择区",
+            font=("Arial", 16, "bold")
+        )
+        device_header.grid(row=0, column=0, pady=(10, 5))
+
+        self.device_optionmenu = customtkinter.CTkOptionMenu(
+            self.device_frame,
+            values=["请先扫描设备..."],
+            command=self._on_device_selected,
+            width=300
+        )
+        self.device_optionmenu.grid(row=1, column=0, pady=10, padx=10)
+
+        self.device_info_textbox = customtkinter.CTkTextbox(
+            self.device_frame,
+            height=150,
+            state="disabled"
+        )
+        self.device_info_textbox.grid(row=2, column=0, pady=10, padx=10, sticky="nsew")
 
         self.test_button = customtkinter.CTkButton(
-            self.button_frame,
-            text="Run Audio Test",
-            command=self._on_test_clicked
+            self.device_frame,
+            text="▶ 播放测试音",
+            command=self._on_test_clicked,
+            fg_color="#2ECC71",
+            hover_color="#27AE60",
+            height=40
         )
-        self.test_button.pack(side="left", padx=10)
+        self.test_button.grid(row=3, column=0, pady=(5, 15), padx=10)
 
-        self.status_label = customtkinter.CTkLabel(self.root, text="Status: Ready", font=("Arial", 12))
-        self.status_label.pack(pady=10)
+    def _build_agent_context_area(self, row: int, column: int):
+        """Build Agent context display area."""
+        self.agent_frame = customtkinter.CTkFrame(self.root)
+        self.agent_frame.grid(row=row, column=column, padx=10, pady=10, sticky="nsew")
+        self.agent_frame.grid_rowconfigure(1, weight=1)
+        self.agent_frame.grid_columnconfigure(0, weight=1)
+
+        agent_header = customtkinter.CTkLabel(
+            self.agent_frame,
+            text="Agent 状态对齐区",
+            font=("Arial", 16, "bold")
+        )
+        agent_header.grid(row=0, column=0, pady=(10, 5))
+
+        self.schema_textbox = customtkinter.CTkTextbox(
+            self.agent_frame,
+            height=200
+        )
+        self.schema_textbox.grid(row=1, column=0, pady=10, padx=10, sticky="nsew")
+
+        button_container = customtkinter.CTkFrame(self.agent_frame, fg_color="transparent")
+        button_container.grid(row=2, column=0, pady=10)
+
+        self.write_config_button = customtkinter.CTkButton(
+            button_container,
+            text="写入 config.py",
+            command=self._on_write_config_clicked,
+            width=140
+        )
+        self.write_config_button.pack(side="left", padx=5)
+
+        self.copy_context_button = customtkinter.CTkButton(
+            button_container,
+            text="复制 Context 给 Agent",
+            command=self._on_copy_context_clicked,
+            width=140
+        )
+        self.copy_context_button.pack(side="left", padx=5)
+
+    def _build_control_area(self, row: int, column: int, columnspan: int):
+        """Build control area with scan button and status."""
+        self.control_frame = customtkinter.CTkFrame(self.root)
+        self.control_frame.grid(row=row, column=column, columnspan=columnspan, pady=15)
+
+        self.scan_button = customtkinter.CTkButton(
+            self.control_frame,
+            text="🔄 扫描设备",
+            command=self._on_scan_clicked,
+            fg_color="#3498DB",
+            hover_color="#2980B9",
+            height=35
+        )
+        self.scan_button.pack(side="left", padx=15)
+
+        self.status_label = customtkinter.CTkLabel(
+            self.control_frame,
+            text="状态: 就绪",
+            font=("Arial", 14)
+        )
+        self.status_label.pack(side="left", padx=15)
 
     def _bind_events(self):
         """Bind Tkinter virtual events for cross-thread communication."""
@@ -59,42 +155,110 @@ class MainWindow:
         self.root.bind("<<HardwareStateChanged>>", self._on_hardware_state_changed)
         self.root.bind("<<DeviceScanComplete>>", self._on_device_scan_complete)
 
+    def _on_device_selected(self, selected_value: str):
+        """Handle device selection from dropdown."""
+        for dev in self._devices:
+            display_name = f"{dev['device_id']}: {dev['device_name']}"
+            if display_name == selected_value:
+                self._selected_device_id = dev["device_id"]
+                self._update_device_info(dev)
+                break
+
+    def _update_device_info(self, device: dict):
+        """Update device info textbox with selected device details."""
+        self.device_info_textbox.configure(state="normal")
+        self.device_info_textbox.delete("1.0", "end")
+        info = f"设备ID: {device['device_id']}\n"
+        info += f"设备名称: {device['device_name']}\n"
+        info += f"原生采样率: {device['native_sample_rate']} Hz\n"
+        info += f"输入通道: {device['max_input_channels']}\n"
+        info += f"输出通道: {device['max_output_channels']}\n"
+        info += f"全双工支持: {'是' if device['is_duplex_supported'] else '否'}"
+        self.device_info_textbox.insert("1.0", info)
+        self.device_info_textbox.configure(state="disabled")
+
     def _on_scan_clicked(self):
-        """Handle scan button click - delegates to core via callback."""
-        self.status_label.configure(text="Status: Scanning...")
+        """Handle scan button click."""
+        self.set_status("正在扫描设备...")
+        self.scan_button.configure(state="disabled", text="扫描中...")
         if self.on_scan_requested:
             self.on_scan_requested()
 
     def _on_test_clicked(self):
-        """Handle test button click - delegates to core via callback."""
-        self.status_label.configure(text="Status: Running audio test...")
+        """Handle test button click."""
+        if self._selected_device_id is None:
+            self.set_status("请先选择设备！")
+            return
+        self.set_test_button_testing(True)
+        self.set_status("正在播放测试音...")
         if self.on_test_triggered:
-            self.on_test_triggered()
+            self.on_test_triggered(self._selected_device_id)
+
+    def _on_write_config_clicked(self):
+        """Handle write config button click."""
+        if self.on_write_config:
+            self.on_write_config()
+        else:
+            self.set_status("Config写入功能未连接")
+
+    def _on_copy_context_clicked(self):
+        """Handle copy context button click."""
+        self.root.clipboard_clear()
+        self.root.clipboard_append(self.schema_textbox.get("1.0", "end"))
+        self.set_status("Context 已复制到剪贴板")
+        if self.on_copy_context:
+            self.on_copy_context()
 
     def _on_audio_test_complete(self, event):
         """Handle audio test completion virtual event."""
-        self.status_label.configure(text="Status: Audio test complete")
+        self.set_status("测试音播放完成")
 
     def _on_hardware_state_changed(self, event):
         """Handle hardware state change virtual event."""
-        self.status_label.configure(text="Status: Hardware state changed")
+        self.set_status("硬件状态已更新")
 
     def _on_device_scan_complete(self, event):
         """Handle device scan completion virtual event."""
-        self.status_label.configure(text="Status: Device scan complete")
+        self.scan_button.configure(state="normal", text="🔄 扫描设备")
+        self.set_status("设备扫描完成")
+
+    def set_test_button_testing(self, is_testing: bool):
+        """Set test button state during audio test."""
+        if is_testing:
+            self.test_button.configure(
+                state="disabled",
+                text="测试中...",
+                fg_color="#95A5A6"
+            )
+        else:
+            self.test_button.configure(
+                state="normal",
+                text="▶ 播放测试音",
+                fg_color="#2ECC71"
+            )
 
     def update_device_list(self, devices: list):
-        """Update the device list display with formatted device information."""
-        self.device_listbox.delete("1.0", "end")
-        for dev in devices:
-            line = f"[{dev['device_id']}] {dev['device_name']} | "
-            line += f"IN: {dev['max_input_channels']} | OUT: {dev['max_output_channels']} | "
-            line += f"Rate: {dev['native_sample_rate']} | Duplex: {dev['is_duplex_supported']}\n"
-            self.device_listbox.insert("end", line)
+        """Update device dropdown with discovered devices."""
+        self._devices = devices
+        if not devices:
+            self.device_optionmenu.configure(values=["未发现设备"])
+            return
+
+        display_names = [f"{dev['device_id']}: {dev['device_name']}" for dev in devices]
+        self.device_optionmenu.configure(values=display_names)
+        self.device_optionmenu.set(display_names[0] if display_names else "请先扫描设备...")
+        if devices:
+            self._selected_device_id = devices[0]["device_id"]
+            self._update_device_info(devices[0])
+
+    def update_schema_display(self, schema_json: str):
+        """Update schema textbox with JSON content."""
+        self.schema_textbox.delete("1.0", "end")
+        self.schema_textbox.insert("1.0", schema_json)
 
     def set_status(self, message: str):
         """Update status message."""
-        self.status_label.configure(text=f"Status: {message}")
+        self.status_label.configure(text=f"状态: {message}")
 
     def run(self):
         """Start the Tkinter main loop."""

@@ -64,6 +64,8 @@ class SafeAudioTester:
                 while self.current_frame_index < duration_frames:
                     pass
             return True
+        except sounddevice.CallbackStop:
+            return True
         except Exception:
             return False
         finally:
