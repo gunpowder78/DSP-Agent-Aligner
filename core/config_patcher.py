@@ -10,7 +10,20 @@ class ConfigPatcher:
 
     @staticmethod
     def patch_constant(file_path: pathlib.Path, target_name: str, new_value: Any) -> bool:
-        """Patch a constant value in a Python source file using AST."""
+        """Patch a top-level constant value in a Python source file using AST.
+
+        Args:
+            file_path: Path to the Python source file
+            target_name: Name of the constant variable (e.g., 'TARGET_DEVICE_ID')
+            new_value: New value to assign (int, float, str, bool)
+
+        Returns:
+            True if patching succeeded
+
+        Raises:
+            ValueError: If target constant not found in file
+            RuntimeError: If patching fails due to other errors
+        """
         try:
             source_code = file_path.read_text(encoding="utf-8")
             tree = ast.parse(source_code)
@@ -21,19 +34,18 @@ class ConfigPatcher:
                     for target in node.targets:
                         if isinstance(target, ast.Name) and target.id == target_name:
                             found = True
-                            if isinstance(node.value, ast.Constant):
-                                node.value.value = new_value
-                            elif isinstance(node.value, ast.Num):
-                                node.value.n = new_value
+                            node.value = ast.Constant(value=new_value)
 
             if not found:
-                return False
+                raise ValueError(f"Constant '{target_name}' not found in file")
 
             modified_code = ast.unparse(tree)
             file_path.write_text(modified_code, encoding="utf-8")
             return True
-        except Exception:
-            return False
+        except ValueError:
+            raise
+        except Exception as e:
+            raise RuntimeError(f"Failed to patch constant: {str(e)}")
 
     @staticmethod
     def patch_dict_constant(
@@ -74,7 +86,7 @@ class ConfigPatcher:
                                     key_value = None
                                     if isinstance(key, ast.Constant):
                                         key_value = key.value
-                                    
+
                                     if key_value == key_name:
                                         found_key = True
                                         node.value.values[i] = ast.Constant(value=new_value)

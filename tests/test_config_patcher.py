@@ -5,12 +5,12 @@ import pathlib
 from core.config_patcher import ConfigPatcher
 
 
-class TestConfigPatcherAST:
-    """Test suite for ConfigPatcher AST manipulation with isolated temp files."""
+class TestConfigPatcherConstant:
+    """Test suite for ConfigPatcher top-level constant patching with tmp_path isolation."""
 
     def test_patch_constant_integer(self, tmp_path):
         """Test patching integer constant value."""
-        config_file = tmp_path / "dummy_config.py"
+        config_file = tmp_path / "config.py"
         config_file.write_text("TARGET_DEVICE_ID = 10\n", encoding="utf-8")
 
         result = ConfigPatcher.patch_constant(config_file, "TARGET_DEVICE_ID", 42)
@@ -21,7 +21,7 @@ class TestConfigPatcherAST:
 
     def test_patch_constant_float(self, tmp_path):
         """Test patching float constant value."""
-        config_file = tmp_path / "dummy_config.py"
+        config_file = tmp_path / "config.py"
         config_file.write_text("SAMPLE_RATE = 44100.0\n", encoding="utf-8")
 
         result = ConfigPatcher.patch_constant(config_file, "SAMPLE_RATE", 48000.0)
@@ -32,7 +32,7 @@ class TestConfigPatcherAST:
 
     def test_patch_constant_string(self, tmp_path):
         """Test patching string constant value."""
-        config_file = tmp_path / "dummy_config.py"
+        config_file = tmp_path / "config.py"
         config_file.write_text('DEVICE_NAME = "Old Name"\n', encoding="utf-8")
 
         result = ConfigPatcher.patch_constant(config_file, "DEVICE_NAME", "New Name")
@@ -43,17 +43,36 @@ class TestConfigPatcherAST:
 
     def test_patch_constant_preserves_syntax(self, tmp_path):
         """Test that patching preserves valid Python syntax."""
-        config_file = tmp_path / "dummy_config.py"
-        original_content = "TARGET_DEVICE_ID = 10\nOTHER_CONST = 20\n"
-        config_file.write_text(original_content, encoding="utf-8")
+        config_file = tmp_path / "config.py"
+        config_file.write_text("TARGET_DEVICE_ID = 10\nOTHER_CONST = 20\n", encoding="utf-8")
 
         ConfigPatcher.patch_constant(config_file, "TARGET_DEVICE_ID", 99)
 
         assert ConfigPatcher.validate_syntax(config_file) is True
 
+    def test_patch_constant_nonexistent_raises_error(self, tmp_path):
+        """Test that patching nonexistent constant raises ValueError."""
+        config_file = tmp_path / "config.py"
+        config_file.write_text("EXISTING = 10\n", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="Constant 'NONEXISTENT' not found"):
+            ConfigPatcher.patch_constant(config_file, "NONEXISTENT", 99)
+
+    def test_patch_constant_preserves_unmodified_constants(self, tmp_path):
+        """Test that patching one constant does not affect others."""
+        config_file = tmp_path / "config.py"
+        config_file.write_text("A = 1\nB = 2\nC = 3\n", encoding="utf-8")
+
+        ConfigPatcher.patch_constant(config_file, "B", 99)
+
+        content = config_file.read_text(encoding="utf-8")
+        assert "A = 1" in content
+        assert "B = 99" in content
+        assert "C = 3" in content
+
     def test_read_constant_integer(self, tmp_path):
         """Test reading integer constant value."""
-        config_file = tmp_path / "dummy_config.py"
+        config_file = tmp_path / "config.py"
         config_file.write_text("TARGET_DEVICE_ID = 42\n", encoding="utf-8")
 
         value = ConfigPatcher.read_constant(config_file, "TARGET_DEVICE_ID")
@@ -62,7 +81,7 @@ class TestConfigPatcherAST:
 
     def test_read_constant_float(self, tmp_path):
         """Test reading float constant value."""
-        config_file = tmp_path / "dummy_config.py"
+        config_file = tmp_path / "config.py"
         config_file.write_text("SAMPLE_RATE = 48000.0\n", encoding="utf-8")
 
         value = ConfigPatcher.read_constant(config_file, "SAMPLE_RATE")
@@ -71,7 +90,7 @@ class TestConfigPatcherAST:
 
     def test_read_constant_string(self, tmp_path):
         """Test reading string constant value."""
-        config_file = tmp_path / "dummy_config.py"
+        config_file = tmp_path / "config.py"
         config_file.write_text('DEVICE_NAME = "Test Device"\n', encoding="utf-8")
 
         value = ConfigPatcher.read_constant(config_file, "DEVICE_NAME")
@@ -80,7 +99,7 @@ class TestConfigPatcherAST:
 
     def test_read_nonexistent_constant(self, tmp_path):
         """Test reading a constant that does not exist."""
-        config_file = tmp_path / "dummy_config.py"
+        config_file = tmp_path / "config.py"
         config_file.write_text("EXISTING = 10\n", encoding="utf-8")
 
         value = ConfigPatcher.read_constant(config_file, "NONEXISTENT")
@@ -101,26 +120,22 @@ class TestConfigPatcherAST:
 
         assert ConfigPatcher.validate_syntax(config_file) is False
 
-    def test_patch_nonexistent_constant_returns_false(self, tmp_path):
-        """Test that patching nonexistent constant returns False."""
-        config_file = tmp_path / "dummy_config.py"
-        config_file.write_text("EXISTING = 10\n", encoding="utf-8")
+    def test_patch_constant_real_world_config(self, tmp_path):
+        """Test patching real-world config with TARGET_DEVICE_ID and SAMPLE_RATE."""
+        config_file = tmp_path / "config.py"
+        config_file.write_text(
+            "TARGET_DEVICE_ID = 13\n"
+            "SAMPLE_RATE = 44100.0\n"
+            "CHANNELS = 2\n",
+            encoding="utf-8"
+        )
 
-        result = ConfigPatcher.patch_constant(config_file, "NONEXISTENT", 99)
+        ConfigPatcher.patch_constant(config_file, "TARGET_DEVICE_ID", 11)
+        ConfigPatcher.patch_constant(config_file, "SAMPLE_RATE", 48000.0)
 
-        assert result is False
-
-    def test_patch_preserves_unmodified_constants(self, tmp_path):
-        """Test that patching one constant does not affect others."""
-        config_file = tmp_path / "dummy_config.py"
-        config_file.write_text("A = 1\nB = 2\nC = 3\n", encoding="utf-8")
-
-        ConfigPatcher.patch_constant(config_file, "B", 99)
-
-        content = config_file.read_text(encoding="utf-8")
-        assert "A = 1" in content
-        assert "B = 99" in content
-        assert "C = 3" in content
+        assert ConfigPatcher.read_constant(config_file, "TARGET_DEVICE_ID") == 11
+        assert ConfigPatcher.read_constant(config_file, "SAMPLE_RATE") == 48000.0
+        assert ConfigPatcher.read_constant(config_file, "CHANNELS") == 2
 
 
 class TestConfigPatcherDictConstant:

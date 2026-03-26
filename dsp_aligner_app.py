@@ -100,7 +100,7 @@ class DAAApplication:
         self.window.set_status(f"已挂载目标配置: {pathlib.Path(file_path).name}")
 
     def _on_write_config(self):
-        """Handle write config request - write selected device to target config.py."""
+        """Handle write config request - write selected device to target config.py using top-level constants."""
         if not self._target_config_path:
             self.window.set_status("错误：请先选择目标配置文件")
             return
@@ -117,23 +117,19 @@ class DAAApplication:
         config_path = pathlib.Path(self._target_config_path)
 
         try:
-            success = self.config_patcher.patch_dict_constant(
+            self.config_patcher.patch_constant(
                 config_path,
-                "PYO_CONFIG",
-                "device",
+                "TARGET_DEVICE_ID",
                 selected_device["device_id"]
             )
 
-            if success:
-                self.config_patcher.patch_dict_constant(
-                    config_path,
-                    "PYO_CONFIG",
-                    "sample_rate",
-                    selected_device["native_sample_rate"]
-                )
-                self.window.set_status(f"成功写入 {config_path.name} (device={selected_device['device_id']})")
-            else:
-                self.window.set_status("配置写入失败")
+            self.config_patcher.patch_constant(
+                config_path,
+                "SAMPLE_RATE",
+                selected_device["native_sample_rate"]
+            )
+
+            self.window.set_status(f"成功写入 {config_path.name} (ID={selected_device['device_id']}, Rate={selected_device['native_sample_rate']})")
         except ValueError as e:
             self.window.set_status(f"写入错误: {str(e)[:40]}")
         except Exception as e:
