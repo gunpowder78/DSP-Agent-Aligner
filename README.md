@@ -19,8 +19,14 @@ Writing cross-platform audio code (like `pyo` or `sounddevice`) on Windows often
 - **🔊 Embodied Auditory Test Loop**: Features a thread-safe, non-blocking `sounddevice` test loop. Validates physical audio output without freezing the GUI or locking up the OS audio bus.
 - **📝 AST Hot-Patching**: Safely injects the tested `TARGET_DEVICE_ID` and `SAMPLE_RATE` directly into your target project's `config.py` using Abstract Syntax Trees (AST). No regex breaking your code format, no OS file-locking deadlocks.
 - **🤖 Zero-Hallucination Agent Contract**: Translates your physical hardware limits into a strict JSON Schema & Markdown prompt. Paste it to your LLM, and it will write perfectly aligned DSP code on the first try.
+---
+
+## 📸 Screenshots
+
+![DAA Screenshot](docs/ui_screenshot.png)
 
 ---
+
 
 ## 🚀 Quick Start
 
