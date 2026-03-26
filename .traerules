@@ -1,0 +1,159 @@
+# **DSP-Agent-Aligner (DAA) 核心工程规范：软件设计文档与智能体测试驱动开发准则**
+
+在跨平台音频应用程序的开发领域中，工程架构的复杂性往往不仅来源于高强度的数字信号处理（DSP）算法，更深刻地根植于底层物理硬件状态、高优先级实时计算线程与非确定性的图形用户界面（GUI）事件循环之间的激烈博弈。当引入“人机协同开发（Human-Agent Collaboration）”范式，允许基于大语言模型（LLM）的自主智能体参与核心代码的编写、测试与重构时，这种复杂性呈现出指数级的增长。智能体虽然具备强大的代码生成能力，但其本质是概率模型，缺乏对本地物理声卡拓扑结构、操作系统音频总线独占锁机制以及线程安全边界的“具身（Embodied）”常识。因此，DSP-Agent-Aligner (DAA) 基础设施项目必须通过极其严苛的架构隔离、确定性的状态契约以及防弹级别的测试驱动开发（TDD）规范，来构建一个对 AI 智能体“零信任”且“绝对安全”的工程沙箱。
+
+本报告作为 DAA 开源项目正式输出的核心交付物，深度整合了针对底层跨平台音频框架（如 PortAudio 及其 Python 绑定 sounddevice）的设备路由陷阱剖析，详细阐述了架构设计的核心原则。报告将划分为两大工程领域：首先是软件设计文档（SDD），确立系统的高层模块化分离、跨线程通信机制与智能体上下文约束契约；其次是测试驱动开发规范（TDD），定义了旨在约束后续接手编码的 AI 智能体的硬性工程纪律与 Mock 策略。
+
+## **交付物 A: 软件设计文档 (Software Design Document, SDD)**
+
+DAA 项目的软件设计哲学建立在“绝对的边界隔离”与“状态的确定性传递”之上。任何模糊的模块边界或跨线程的数据竞争，在涉及毫秒级音频回调的系统中，都将导致不可恢复的灾难性崩溃。
+
+### **架构概览：严苛的 MVC 分层设计与单向数据流**
+
+DAA 的基础架构严格遵循模型-视图-控制器（MVC）设计模式，但在具体实现上，它实施了极端的物理文件级隔离。系统被清晰地划分为 core/（逻辑与数据域）与 ui/（视图域）。在传统的 Python 桌面应用开发中，开发者往往为了便利而将业务逻辑与 GUI 事件处理函数混合，这种做法在音频工程中是绝对不可容忍的。图形用户界面，尤其是基于 CustomTkinter 构建的界面，必须被降维至一个纯粹的“状态反射器”。
+
+在 DAA 的架构定义中，ui/ 目录下的任何模块（如 main\_window.py）绝对禁止包含任何形式的数字信号处理运算、音频缓冲区的动态分配或针对底层硬件接口的直接调用。GUI 线程（即 Python 的主线程）受制于全局解释器锁（GIL）的调度，且 CustomTkinter 的底层 Tcl/Tk 引擎本质上是非线程安全的 1。如果图形界面试图直接调用 sounddevice.play() 或轮询声卡状态，极易引发 GUI 挂起（Freezing）或音频缓冲欠载（Buffer Underrun）。更严重的是，当从另一个线程与 Tkinter 组件交互时，存在引发 CPython 底层崩溃的风险（如知名的 CPython Bug \#47655）2。
+
+为了解决这一困境，系统定义了 core/ 与 ui/ 之间的严格单向数据流。所有关于硬件探测、流初始化、DSP 矩阵运算逻辑均封装在 core/ 中。当 core/ 域中的音频引擎状态发生改变（例如，发现新设备、发生缓冲区溢出、或音频测试播放完毕），它不可以直接修改 UI 对象的属性。相反，DAA 引入了一套基于操作系统底层事件队列的跨线程通信系统。
+
+具体而言，核心控制器会利用目标 Tkinter 控件的 event\_generate() 方法，向操作系统的 GUI 事件循环中注入自定义的虚拟事件（如 \<\<AudioTestComplete\>\> 或 \<\<HardwareStateChanged\>\>）2。这种机制之所以安全，是因为 event\_generate() 是极少数被官方声明为线程安全的 Tkinter 方法之一 5。后台的高优先级音频线程或监控线程仅负责将带有状态载荷（Payload）的虚拟事件推送入队，随后立即返回继续处理实时任务。主 GUI 线程在其原生的 mainloop() 中捕获到该事件后，会在自身线程的安全上下文中执行回调函数，读取 core/ 暴露的只读状态快照，并刷新视觉组件。这种解耦不仅消除了数据竞争，更确保了即使 GUI 界面因系统负载过高而出现帧率下降，底层负责推动 DAC（数模转换器）的音频引擎也绝不会被阻塞。
+
+### **线程与生命周期模型：异步回调与具身测试闭环**
+
+在跨平台音频开发中，音频输入/输出流的生命周期管理是导致进程崩溃和死锁的核心难点所在。特别是在 Windows 操作系统下，为了绕过系统级的软件混音器（Kmixer）以获得极致的低延迟，专业应用通常会采用 Windows Audio Session API (WASAPI) 的独占模式（Exclusive Mode）7。在 WASAPI 独占模式下，应用程序与音频硬件端点建立了独占的物理总线锁定 9。这就意味着，如果 DAA 中的音频测试线程由于逻辑错误或未捕获的异常而意外中止，且未能执行标准的流关闭流程，该硬件设备的独占锁将无法释放。这将导致整个操作系统的音频子系统瘫痪，任何其他应用程序都无法访问该声卡，用户通常只能通过强制重启计算机来恢复。
+
+为了使后续的 AI 智能体能够在一个绝对安全的环境中编写和运行针对物理声卡的测试用例，DAA 架构设计了 SafeAudioTester 模块。该模块的职责是构建一个“具身测试闭环（Embodied Test Loop）”，确保无论发生何种情况，硬件总线锁都能被安全释放。其生命周期模型的解耦设计详见下方 Mermaid 序列图。
+
+代码段
+
+sequenceDiagram  
+    autonumber  
+    participant GUI as 主 GUI 线程 (Tkinter)  
+    participant Core as DAA 控制器 (core/)  
+    participant SAT as SafeAudioTester (核心安全沙箱)  
+    participant C\_Thread as PortAudio 回调线程 (高优先级 C 线程)  
+    participant HW\_Bus as Windows WASAPI 硬件总线
+
+    GUI-\>\>Core: 用户点击“触发硬件物理测试”  
+    Core-\>\>SAT: invoke\_test\_sequence(device\_id, parameters)  
+    activate SAT  
+      
+    note over SAT: 绝对禁止在回调中分配内存\<br/\>执行 Numpy 浮点矩阵预计算  
+    SAT-\>\>SAT: Precompute Numpy Test Waveform (float32)  
+      
+    SAT-\>\>HW\_Bus: 请求获取 WASAPI 独占锁 (Exclusive Lock)  
+    activate HW\_Bus  
+      
+    SAT-\>\>C\_Thread: 实例化 sounddevice.OutputStream(callback, non-blocking)  
+    activate C\_Thread  
+      
+    note over C\_Thread, HW\_Bus: 进入异步 C 语言音频回调循环  
+    loop 请求音频缓冲区切片  
+        C\_Thread-\>\>SAT: 回调触发，请求 N 帧数据  
+        SAT--\>\>C\_Thread: 返回预计算 Numpy 数组的内存视图切片  
+        C\_Thread-\>\>HW\_Bus: 将 float32 数据推送至 DAC 寄存器  
+    end
+
+    note over SAT: 内部指针探测到 Numpy 数组边界耗尽  
+    C\_Thread-\>\>SAT: 回调触发，请求最后剩余帧  
+      
+    note right of SAT: 触发具身闭环终止信号  
+    SAT-\>\>C\_Thread: 抛出 sounddevice.CallbackStop() 异常  
+      
+    C\_Thread-\>\>HW\_Bus: 冲刷(Flush)最后残余缓冲区数据  
+    deactivate C\_Thread  
+      
+    note over C\_Thread, SAT: CFFI 层捕获异常，将 paComplete 状态传递给底层  
+    C\_Thread--\>\>SAT: 异步流优雅关闭 (Graceful Shutdown)  
+      
+    SAT-\>\>HW\_Bus: 确认流已销毁，释放 WASAPI 独占锁  
+    deactivate HW\_Bus  
+      
+    SAT-\>\>GUI: event\_generate(\<\<AudioTestComplete\>\>) (线程安全跨域通信)  
+    deactivate SAT
+
+此序列图揭示了几个极其关键的工程决策。首先，SafeAudioTester 严格禁止在活跃的音频回调内部执行实时的 DSP 计算或对象实例化。在非阻塞模式下（blocking=False）10，PortAudio 回调函数由操作系统的实时调度器以极高的优先级周期性调用。任何可能触发 Python 垃圾回收（Garbage Collection）的操作、任何获取 GIL 时间过长的操作，都会导致回调函数无法在严格的时间窗口内填满输出缓冲区，从而引发破音（Glitch/Click）。因此，SafeAudioTester 必须在打开音频流之前，将整个测试波形完全预计算为一个连续的 Numpy 数组（通常为 float32 类型以匹配底层 C 结构）11。在回调函数内部，唯一允许的操作是内存地址偏移与数组切片的拷贝 13。
+
+其次，闭环的终止并非通过传统的布尔标志位或循环中断（break）来实现，而是依赖于一种特殊的异常抛出机制。当回调函数内部的切片逻辑检测到预计算的 Numpy 波形数据已被完全消耗时，它必须抛出 sounddevice.CallbackStop() 异常 14。在 Python 层面上主动抛出异常通常代表程序的失败，但在此上下文中，这是一个精确的控制信号。底层的 CFFI（C Foreign Function Interface）绑定在捕获到此特定异常后，会将其翻译为 C 语言层面的 paComplete 状态码 13。这一状态码指示 PortAudio 停止对回调函数的进一步调用，排空底层的硬件队列，并优雅地销毁流结构 16。只有确保这一优雅的销毁过程完整发生，SafeAudioTester 才能保证 Windows 音频子系统释放其对 WASAPI 设备的独占控制权。这种利用受控异常来保证硬件状态安全的模式，是 DAA 架构中的核心护城河。
+
+### **Agent 零幻觉契约设计 (Context Generator)**
+
+在确认了线程与执行模型的安全性之后，DAA 必须解决由 AI 智能体介入带来的数据层面的不确定性。大语言模型本质上是自回归的词汇预测引擎，它们在处理抽象的逻辑和通用代码生成时表现优异，但面对具体的、强依赖本地物理环境配置的任务时，往往会产生严重的“幻觉（Hallucinations）”17。例如，智能体可能会试图调用一个它认为应当存在的“标准麦克风”逻辑接口，或者错误地假设所有的音频设备都支持 44100Hz 的采样率，甚至盲目地将双声道数据写入单声道硬件。在与底层 C 库（如 PortAudio）直接交互时，这些由于幻觉导致的错误参数传递会引发致命的段错误（Segmentation Faults）或 PortAudioError（例如 PaErrorCode \-9998 无效的通道数）19。
+
+为了彻底消除这种由于大语言模型物理信息真空所带来的不稳定因素，DAA 构建了一个称为“上下文生成器（Context Generator）”的模块。该模块的职责是在允许智能体生成任何与硬件交互的代码之前，动态扫描宿主机的当前物理声卡拓扑结构，并将其序列化为一份确定性的、严格规范的 JSON Schema 契约 20。智能体后续生成的所有系统调用参数，必须严格受到该 Schema 中提取的值的约束。
+
+此 Schema 的设计极具针对性，专门为了规避跨平台音频框架中隐晦的设备路由陷阱，特别是在 Windows 系统中常见的非对称设备问题。由于底层驱动模型（特别是 WDM 和 WASAPI）的设计机制，Windows 会将物理上的多通道全双工声卡拆分为多个独立的单向逻辑设备 24。例如，一个物理头戴式耳机在查询结果中会显示为两个独立的设备条目：一个仅具有2个输出通道且具有0个输入通道的扬声器（Windows WASAPI），以及另一个仅具有2个输入通道且具有0个输出通道的麦克风阵列（Windows WASAPI）19。如果在代码中直接使用 sounddevice.Stream()（全双工流），并传入这种被拆分的设备 ID，底层将试图在具有0个输入通道的设备上打开输入流，导致程序瞬间崩溃 9。
+
+因此，DAA 的 JSON Schema 必须对这些拓扑特征进行高度结构化的建模。具体的 Schema 结构规范要求如下表所示：
+
+| Schema 键名 (Key) | 数据类型 (Type) | 物理映射含义与 Agent 约束规则 (Contract Rules) |
+| :---- | :---- | :---- |
+| device\_id | integer | 代表 PortAudio 赋予当前物理端点的绝对数字索引。Agent **绝对禁止**进行推测、硬编码或对该 ID 执行算术运算。代码中的设备选择必须直接引用此字段的值。 |
+| device\_name | string | 硬件设备的字符串标识符（例如："SPDIF Out (Sound Blaster Audigy)"）25。用于在 UI 层向用户展示，并允许 LLM 进行基于语义的正则匹配或字符串过滤。 |
+| native\_sample\_rate | float | 硬件设备锁定的默认原生采样率（通常为 44100.0 或 48000.0）。在 WASAPI 模式下，强制要求下发的数据采样率必须与此字段匹配，否则操作系统的重采样器（Resampler）将拒绝连接并抛出无效设备错误 27。 |
+| max\_input\_channels | integer | 该端点支持的最大上行输入通道数 28。Agent 必须使用此值来初始化 Numpy 缓冲区的列维度，以防止出现数组越界（Out-of-Bounds）的切片访问。 |
+| max\_output\_channels | integer | 该端点支持的最大下行输出通道数。同样用于约束 DSP 路由矩阵的维度大小。 |
+| is\_duplex\_supported | boolean | **核心防御机制：** 该布尔值不由底层直接提供，而是由 Context Generator 通过逻辑 (max\_input\_channels \> 0\) AND (max\_output\_channels \> 0\) 严格计算得出。当遇到 0 通道的 WASAPI 设备时，该值将显式声明为 False。**契约红线：** 若此字段为 False，Agent 绝对禁止实例化全双工流（如 sd.Stream 或 sd.playrec），仅能使用单向的 InputStream 或 OutputStream。 |
+
+这个精心设计的 JSON Schema 将作为系统提示词（System Prompt）的核心载荷，注入到参与 DAA 项目开发的 LLM 的上下文中 18。通过预先设定严格的输出结构边界，DAA 有效地将 LLM 从一个漫无目的的代码生成器转化为一个受物理规则约束的确定性逻辑处理器。智能体只需根据确切的 device\_id、匹配的 native\_sample\_rate 以及验证过的 is\_duplex\_supported 布尔值，拼接组装跨平台音频调用的模板代码，从而在根源上实现了硬件状态的“零幻觉”控制 17。
+
+## **交付物 B: 测试驱动开发规范 (TDD Rules & Agent Guidelines)**
+
+在传统软件工程中，测试驱动开发（TDD）要求开发者先编写失败的测试用例，再通过业务代码使测试通过。然而，当被测系统是一个涉及本地物理硬件依赖、操作系统层面音频驱动交互以及复杂 GUI 事件循环的应用程序时，实施 TDD 的难度呈指数级跃升。最大的痛点在于：现代的持续集成与持续部署（CI/CD）流水线（如 GitHub Actions、GitLab CI runners）大多运行在无头（Headless）的 Linux 虚拟机或容器中，这些虚拟化环境根本不存在物理声卡驱动，甚至没有挂载基础的虚拟音频设备（如 ALSA 的 dummy 驱动或 PulseAudio 守护进程）31。
+
+如果强行在 CI/CD 中执行诸如 sounddevice.query\_devices() 的硬件查询调用，程序会立刻引发 PortAudioError 或返回空列表，导致所有的下游 DSP 逻辑测试全部断言失败 14。因此，我们必须为 DAA 项目制定一份异常严格的工程准则。以下规则格式化为 .cursorrules 或 .traerules 风格，以便直接作为系统预设被 AI 编程助手读取、解析并强制执行。
+
+### **规则一：硬件边界的绝对解耦与 Mock 拓扑策略**
+
+**上下文解析：** 智能体在处理位于 core/ 域中与设备扫描、过滤和选择相关的业务逻辑时，必须假定代码将运行在一个“没有耳朵和嘴巴”的真空环境中。绝对禁止在单元测试（Unit Tests）中直接调用任何触发底层 CFFI 硬件探查的接口。相反，智能体必须运用深度的隔离测试策略，使用 Python 标准库中的 unittest.mock.patch（或 Pytest 的 mocker 装饰器/上下文管理器），对 sounddevice.query\_devices 函数进行全面拦截与伪造 31。
+
+为了彻底验证 DAA 设备过滤逻辑的鲁棒性，特别是其对 Windows 系统复杂设备树的解析能力，智能体编写的测试用例中，Mock 对象的返回值必须是一个能够代表现实世界最复杂情况的结构化列表（模拟 DeviceList 对象）28。
+
+**实施准则：** 在任何涉及 device\_manager.py 或相关路由扫描器的测试文件中，必须构建并注入以下标准的 Mock 场景字典列表 28：
+
+| 索引 (Index) | 模拟设备名称 (name) | 宿主 API (hostapi) | 输入 (max\_input) | 输出 (max\_output) | 采样率 (default\_samplerate) | 验证意图与测试断言目标 |
+| :---- | :---- | :---- | :---- | :---- | :---- | :---- |
+| 0 | Microsoft Sound Mapper \- Input | MME | 2 | 0 | 44100.0 | 验证算法是否能够正确识别并丢弃高延迟的过时 API（如 MME 或 DirectSound）。 |
+| 1 | Speakers (Realtek Audio) | Windows WASAPI | 0 | 2 | 48000.0 | **极端边界验证：** 模拟包含 0 输入通道的 WASAPI 纯输出设备 25。测试必须断言 is\_duplex\_supported 生成逻辑在此节点正确输出 False，并将其成功归类为单向播放端点。 |
+| 2 | Microphone Array (Focusrite) | ASIO | 4 | 0 | 96000.0 | 多通道高采样率纯输入设备 26。测试必须验证算法能够提取出更高的原生采样率，并正确约束只读属性。 |
+| 3 | Universal Audio Apollo Twin | ASIO | 18 | 20 | 192000.0 | 巨型专业全双工矩阵。测试必须断言该设备允许触发完整的双向读写逻辑，且其极高通道数不会触发索引越界异常。 |
+
+通过强制注入此结构化的 Mock 字典列表，智能体可以在完全脱离物理硬件的 CI/CD 容器中，精确验证算法对奇异设备通道数配置的降级处理逻辑与隔离分类机制的正确性。
+
+### **规则二：异步音频回调的微观边界测试规范**
+
+**上下文解析：** PortAudio 的核心是一个在后台高优先级线程中运行的 C 语言回调函数 10。在 Python 层面上，这个回调函数 audio\_callback(outdata, frames, time, status) 是由底层的音频宿主主动调用的，并不受主线程的直接控制 13。如果试图通过实例化真正的 sounddevice.OutputStream 并配合睡眠（time.sleep()）来进行测试，这种宏观的集成测试不仅执行缓慢，而且极易导致随机失败（Flaky Tests）。为了实现严格的 TDD 控制，智能体必须剥离流对象，将回调函数视为一个单纯的“数据处理纯函数”进行直接的单元测试 35。
+
+**实施准则：** 智能体必须遵循以下四个微观步骤对 audio\_callback 的内部切片消耗逻辑进行断言验证 36：
+
+1. **状态初始化伪造：** 在测试函数的顶级作用域内，实例化一个长度明确的 Numpy 数组（例如，总长度为 1024 帧的 float32 正弦波），代表 SafeAudioTester 中预计算的信号波形。同时，手动初始化一个记录当前播放偏移量的全局/类变量（例如 current\_frame\_index \= 0）。  
+2. **缓冲区空载注入：** 动态创建一个空的 Numpy 数组（例如形状为 (256, 2)），这模拟了 C 语言底层每次向 Python 回调索要的 outdata 缓冲区 13。  
+3. **循环迭代演练：** 在一个 for 循环中，主动以同步方式调用该回调函数，并传入伪造的空载缓冲区。前几次迭代中，必须断言预计算数组的数据被正确且精确地切片拷贝到了 outdata 的相应视图（View）中，且偏移量索引被正确累加更新。  
+4. **边界异常捕获（核心验证）：** 设计最后一次循环调用，当剩余的波形数据量小于底层的请求帧数（即发生了 Buffer 边界重合或跨越）时，必须使用 pytest.raises(sounddevice.CallbackStop) 上下文管理器，精准拦截回调函数抛出的终止异常 14。测试必须断言：一旦数组耗尽，异常立即被触发，且剩余未填满的缓冲区区域已被正确地执行了归零（Zero-padding）操作，以避免产生残存内存数据的噪声 15。
+
+这种测试规范剥离了所有的底层 CFFI 交互逻辑，确保智能体能够在极其微观的数据维度上保证音频 DSP 管道的边界安全性。
+
+### **规则三：抽象语法树（AST）重写与副作用隔离的铁律**
+
+**上下文解析：** 在 DAA 框架中，存在一个允许根据特定音频拓扑结构进行动态热更新的模块 config\_patcher.py。该模块具备直接修改 Python 源代码文件并保存常量配置的能力。在自动化脚本中，如果使用简单的正则表达式（Regex）来替换源代码中的变量值，往往会因为缩进错误或多行字符串的干扰而导致语法破坏。因此，系统采用了更稳健的 ast（抽象语法树）模块，对脚本进行解析（ast.parse）、遍历（ast.walk）、节点属性修改（如对 ast.Assign 下的 ast.Constant 进行重写），最终逆向还原代码结构（ast.unparse）37。
+
+由于该模块涉及磁盘级别的文件 I/O 写入（即修改源码自身），如果测试用例直接作用于生产环境（Production）的代码文件，一旦测试中途失败、断言异常或发生死锁，原始的物理源文件将被永久污染甚至损坏。
+
+**实施准则：** 针对所有涉及 config\_patcher.py 或产生磁盘 I/O 写入副作用的测试，智能体受到**绝对禁止污染真实配置文件**的纪律约束。所有的此类测试用例，必须强制依赖并调用 Pytest 内置的 tmp\_path 夹具（Fixture）42。
+
+1. **路径注入：** 智能体在编写测试签名时，必须将 tmp\_path 作为参数注入。tmp\_path 会利用操作系统的临时目录架构（如 Linux 下的 /tmp），为每次具体的测试调用提供一个独特的、独立的 pathlib.Path 对象目录 43。  
+2. **隔离构建：** 在执行替换逻辑前，测试必须在 tmp\_path 目录中动态写入一个虚拟的 Python 配置文件（例如 dummy\_config.py），其中包含待验证的 AST 节点结构（如 TARGET\_DEVICE\_ID \= 10）45。  
+3. **靶向重写验证：** 智能体调用被测的 config\_patcher.py 逻辑，其目标文件路径必须严格限定为刚刚在临时目录中创建的文件。然后，从临时目录中反向读取内容，断言 AST 的常量节点替换是否成功且未破坏文件结构。  
+4. **生命周期终结：** 智能体无需编写清理（Cleanup）代码。借助 Pytest 的原生生命周期管理，测试运行完毕后，该沙箱目录会在不干扰全局环境的情况下被静默保留用于错误审查，并在后续调用后被安全抛弃 43。任何视图在项目的 src/ 或根目录下创建临时文件进行测试的 PR（Pull Request）将被静态分析器直接否决。
+
+### **规则四：智能体编码纪律与架构越权红线 (Agent Red Lines)**
+
+为确保 AI 智能体在迭代开发中不偏离 SDD 定义的架构原则，防止因“路径依赖”或为了图省事而导致的架构腐化（Architecture Rot），特设立以下硬性编码纪律红线。这些红线构成了最终 .cursorrules 的执行边界：
+
+1. **Red-Green-Refactor 绝对顺序：** 智能体在接收到功能需求时，必须首先生成完整的、处于失败状态（Red）的测试套件（包括上述的 Mock 结构和 tmp\_path 沙箱）。只有在测试逻辑验证闭环之后，才允许前往 core/ 目录编写核心业务逻辑以使测试通过（Green）。最后进行代码优化和冗余消除（Refactor）。  
+2. **视图层物理调用禁令：** 智能体在编辑任何位于 ui/ 命名空间下的文件（特别是 ui/main\_window.py）时，**绝对禁止使用 import sounddevice 或导入任何底层的 CFFI 绑定库** 11。界面组件必须保持纯粹的“愚蠢（Dumb）”状态。如果要查询声卡列表，界面只能调用 core.event\_dispatcher.request\_hardware\_scan()，随后在接收到特定的 Tkinter 虚拟事件时，从传递的事件载荷或状态管理器中读取格式化后的字符串列表 3。任何试图跨越 MVC 屏障，直接在按钮点击回调函数中调用硬件驱动的尝试，都是对架构的严重破坏。  
+3. **静默吞咽异常禁令（No Bare Excepts）：** 在处理 PortAudio 回调函数或多线程队列通信时，智能体被禁止使用裸露的 except: 语句来静默吞咽错误。如果在 DSP 切片过程或内存拷贝中发生不可预见的异常，该异常必须向上抛出，或主动转换为 sounddevice.CallbackAbort 异常 13。静默处理将导致 C-线程陷入死锁或将充满噪声的脏数据块无限循环推送到 DAC 寄存器，从而可能损坏物理扬声器。错误必须以最猛烈、最迅速的方式引发进程的中断，以此保障硬件端点的物理安全。  
+4. **严格遵守 Schema 类型强制转换：** 在将图形用户界面中捕获的字符串数据（例如下拉菜单选中的文本）传递到底层 core/ 函数之前，智能体必须参照 Context Generator 生成的 JSON Schema 对其进行严格的强类型转换。如果 Schema 规定 native\_sample\_rate 必须为 float 且 device\_id 必须为 int，那么在将这些参数塞入 sounddevice.OutputStream() 之前，必须执行类似 float(dropdown\_value) 和 int(id\_str) 的转换。绝对不能寄希望于 CFFI 包装层会自动处理 Python 的弱类型特征。
+
+通过将上述 SDD 架构解耦原理与详尽的 TDD 测试准则整合为一份强制性的工程规范，DSP-Agent-Aligner (DAA) 项目能够在赋予大语言模型自主开发能力的同时，构建起一道不可逾越的安全防火墙。这不仅确保了极低延迟音频引擎的稳定性与确定性，更为未来的人机协同编程在处理涉及复杂本地物理总线锁、操作系统底层驱动交互的严苛工业级应用场景中，树立了标杆式的工程范式。
+
