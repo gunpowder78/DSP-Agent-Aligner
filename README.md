@@ -26,7 +26,7 @@ Writing cross-platform audio code (like `pyo` or `sounddevice`) on Windows often
 ![DAA Screenshot](docs/ui_screenshot.png)
 
 ---
-
+---
 
 ## 🚀 Quick Start
 
