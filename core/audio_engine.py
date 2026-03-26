@@ -60,15 +60,16 @@ class SafeAudioTester:
                 callback=self.audio_callback,
                 blocksize=256
             )
-            with self._stream:
-                while self.current_frame_index < duration_frames:
-                    pass
+            self._stream.start()
+            self._stream.wait()
             return True
         except sounddevice.CallbackStop:
             return True
         except Exception:
             return False
         finally:
+            if self._stream:
+                self._stream.close()
             self._stream = None
 
 
