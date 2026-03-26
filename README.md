@@ -23,7 +23,7 @@ Writing cross-platform audio code (like `pyo` or `sounddevice`) on Windows often
 
 ## 📸 Screenshots
 
-![DAA Screenshot](docs/ui_screenshot.png)
+![DAA Screenshot](docs/ui_screenshot.jpg)
 
 ---
 ---
