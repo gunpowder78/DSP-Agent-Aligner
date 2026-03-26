@@ -1,9 +1,8 @@
-"""Tests for AgentContext - JSON Schema contract generation with mocked hardware."""
+"""Tests for AgentContext - JSON Schema contract generation with precise alignment."""
 
 import pytest
-from unittest.mock import patch, MagicMock
+import json
 from core.agent_context import AgentContext
-from core.audio_engine import AudioEngine
 
 
 MOCK_DEVICE_LIST = [
@@ -43,100 +42,105 @@ MOCK_DEVICE_LIST = [
 
 
 class TestAgentContextSchema:
-    """Test suite for AgentContext JSON Schema generation."""
+    """Test suite for AgentContext JSON Schema generation with precise alignment."""
 
-    @patch.object(AudioEngine, "scan_devices")
-    def test_generate_schema_returns_valid_structure(self, mock_scan):
+    def test_generate_schema_returns_valid_structure(self):
         """Test that generate_schema returns properly structured contract."""
-        mock_scan.return_value = MOCK_DEVICE_LIST
-
         context = AgentContext()
-        schema = context.generate_schema()
+        schema = context.generate_schema(MOCK_DEVICE_LIST, selected_device_id=1)
 
         assert "version" in schema
         assert "contract_rules" in schema
-        assert "devices" in schema
+        assert "selected_endpoint" in schema
         assert "constraints" in schema
 
-    @patch.object(AudioEngine, "scan_devices")
-    def test_schema_contains_all_mock_devices(self, mock_scan):
-        """Test that schema captures all mock devices."""
-        mock_scan.return_value = MOCK_DEVICE_LIST
-
+    def test_schema_contains_only_selected_device(self):
+        """Test that schema contains ONLY the selected device, not all devices."""
         context = AgentContext()
-        schema = context.generate_schema()
+        schema = context.generate_schema(MOCK_DEVICE_LIST, selected_device_id=1)
 
-        assert len(schema["devices"]) == 4
+        assert "selected_endpoint" in schema
+        assert "devices" not in schema
 
-    @patch.object(AudioEngine, "scan_devices")
-    def test_schema_contract_rules_present(self, mock_scan):
+        endpoint = schema["selected_endpoint"]
+        assert endpoint["device_id"] == 1
+        assert endpoint["device_name"] == "Speakers (Realtek Audio)"
+
+    def test_schema_contract_rules_present(self):
         """Test that schema contains mandatory contract rules."""
-        mock_scan.return_value = MOCK_DEVICE_LIST
-
         context = AgentContext()
-        schema = context.generate_schema()
+        schema = context.generate_schema(MOCK_DEVICE_LIST, selected_device_id=3)
 
-        assert "device_selection" in schema["contract_rules"]
+        assert "device_binding" in schema["contract_rules"]
         assert "sample_rate" in schema["contract_rules"]
         assert "duplex_guard" in schema["contract_rules"]
 
-    @patch.object(AudioEngine, "scan_devices")
-    def test_schema_forbidden_actions(self, mock_scan):
+    def test_schema_forbidden_actions(self):
         """Test that schema lists forbidden actions for agent."""
-        mock_scan.return_value = MOCK_DEVICE_LIST
-
         context = AgentContext()
-        schema = context.generate_schema()
+        schema = context.generate_schema(MOCK_DEVICE_LIST, selected_device_id=0)
 
         forbidden = schema["constraints"]["forbidden_actions"]
         assert "Do NOT perform arithmetic on device_id" in forbidden
-        assert "Do NOT assume all devices support 44100Hz" in forbidden
-        assert "Do NOT create full-duplex streams on half-duplex hardware" in forbidden
+        assert "Do NOT use any device_id other than the one in selected_endpoint" in forbidden
 
-    @patch.object(AudioEngine, "scan_devices")
-    def test_get_schema_json_returns_string(self, mock_scan):
+    def test_get_schema_json_returns_valid_json(self):
         """Test that get_schema_json returns valid JSON string."""
-        mock_scan.return_value = MOCK_DEVICE_LIST
-
         context = AgentContext()
+        context.generate_schema(MOCK_DEVICE_LIST, selected_device_id=2)
+
         json_str = context.get_schema_json()
 
         assert isinstance(json_str, str)
-        assert '"device_id"' in json_str
-        assert '"is_duplex_supported"' in json_str
+        parsed = json.loads(json_str)
+        assert parsed["selected_endpoint"]["device_id"] == 2
 
-    @patch.object(AudioEngine, "scan_devices")
-    def test_get_device_by_id(self, mock_scan):
-        """Test device retrieval by device_id."""
-        mock_scan.return_value = MOCK_DEVICE_LIST
-
+    def test_get_selected_device(self):
+        """Test get_selected_device returns the correct device."""
         context = AgentContext()
-        context.generate_schema()
+        context.generate_schema(MOCK_DEVICE_LIST, selected_device_id=3)
 
-        device = context.get_device(2)
+        device = context.get_selected_device()
+
         assert device is not None
-        assert device["device_name"] == "Microphone Array (Focusrite)"
+        assert device["device_id"] == 3
+        assert device["device_name"] == "Universal Audio Apollo Twin"
 
-    @patch.object(AudioEngine, "scan_devices")
-    def test_get_duplex_devices(self, mock_scan):
-        """Test filtering of full-duplex devices."""
-        mock_scan.return_value = MOCK_DEVICE_LIST
-
+    def test_get_device_id(self):
+        """Test get_device_id returns correct ID."""
         context = AgentContext()
-        context.generate_schema()
+        context.generate_schema(MOCK_DEVICE_LIST, selected_device_id=1)
 
-        duplex_devices = context.get_duplex_devices()
-        assert len(duplex_devices) == 1
-        assert duplex_devices[0]["device_name"] == "Universal Audio Apollo Twin"
+        assert context.get_device_id() == 1
 
-    @patch.object(AudioEngine, "scan_devices")
-    def test_get_output_devices(self, mock_scan):
-        """Test filtering of output-only devices."""
-        mock_scan.return_value = MOCK_DEVICE_LIST
-
+    def test_invalid_device_id_raises_error(self):
+        """Test that invalid device_id raises ValueError."""
         context = AgentContext()
-        context.generate_schema()
 
-        output_devices = context.get_output_devices()
-        assert len(output_devices) == 2
-        assert all(d["max_output_channels"] > 0 for d in output_devices)
+        with pytest.raises(ValueError, match="Device ID 999 not found"):
+            context.generate_schema(MOCK_DEVICE_LIST, selected_device_id=999)
+
+    def test_get_schema_json_before_generate_raises_error(self):
+        """Test that get_schema_json raises error if generate_schema not called."""
+        context = AgentContext()
+
+        with pytest.raises(RuntimeError, match="Schema not generated"):
+            context.get_schema_json()
+
+    def test_duplex_device_correctly_identified(self):
+        """Test that full-duplex device is correctly identified in schema."""
+        context = AgentContext()
+        schema = context.generate_schema(MOCK_DEVICE_LIST, selected_device_id=3)
+
+        assert schema["selected_endpoint"]["is_duplex_supported"] is True
+        assert schema["selected_endpoint"]["max_input_channels"] == 18
+        assert schema["selected_endpoint"]["max_output_channels"] == 20
+
+    def test_half_duplex_device_correctly_identified(self):
+        """Test that half-duplex device is correctly identified in schema."""
+        context = AgentContext()
+        schema = context.generate_schema(MOCK_DEVICE_LIST, selected_device_id=1)
+
+        assert schema["selected_endpoint"]["is_duplex_supported"] is False
+        assert schema["selected_endpoint"]["max_output_channels"] == 2
+        assert schema["selected_endpoint"]["max_input_channels"] == 0

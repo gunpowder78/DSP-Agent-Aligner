@@ -13,9 +13,9 @@ class DAAApplication:
 
     def __init__(self):
         self.audio_engine = AudioEngine()
-        self.agent_context = AgentContext(self.audio_engine)
+        self.agent_context = AgentContext()
         self.config_patcher = ConfigPatcher()
-        self._selected_device: dict = {}
+        self._selected_device_id: int = -1
 
         self.window = MainWindow(
             on_test_triggered=self._on_test_triggered,
@@ -44,7 +44,7 @@ class DAAApplication:
     def _on_test_triggered(self, device_id: int):
         """Handle audio test trigger - runs in background thread, safe cross-thread UI update."""
         def test_worker():
-            device = self.audio_engine.get_device_by_name("")
+            device = None
             for dev in self.audio_engine._devices:
                 if dev["device_id"] == device_id:
                     device = dev
@@ -55,7 +55,7 @@ class DAAApplication:
                 self.window.root.after(0, lambda: self.window.set_test_button_testing(False))
                 return
 
-            self._selected_device = device
+            self._selected_device_id = device_id
 
             success = self.audio_engine.play_test_tone(
                 device_id=int(device["device_id"]),
@@ -82,15 +82,25 @@ class DAAApplication:
         self.window.root.event_generate("<<AudioTestComplete>>", when="tail")
 
     def _generate_and_display_schema(self):
-        """Generate JSON Schema contract and display in UI."""
-        self.agent_context.generate_schema()
+        """Generate JSON Schema contract for selected device only and display in UI."""
+        if self._selected_device_id < 0:
+            self.window.set_status("请先选择设备")
+            return
+
+        all_devices = self.audio_engine._devices
+        self.agent_context.generate_schema(all_devices, self._selected_device_id)
         schema_json = self.agent_context.get_schema_json()
         self.window.update_schema_display(schema_json)
 
     def _on_write_config(self):
         """Handle write config request - write selected device to config.py."""
-        if not self._selected_device:
+        if self._selected_device_id < 0:
             self.window.set_status("请先播放测试音选择设备")
+            return
+
+        selected_device = self.agent_context.get_selected_device()
+        if not selected_device:
+            self.window.set_status("设备信息未找到")
             return
 
         config_path = pathlib.Path("config.py")
@@ -99,22 +109,22 @@ class DAAApplication:
             success = self.config_patcher.patch_constant(
                 config_path,
                 "TARGET_DEVICE_ID",
-                self._selected_device["device_id"]
+                selected_device["device_id"]
             )
 
             if success:
                 self.config_patcher.patch_constant(
                     config_path,
                     "SAMPLE_RATE",
-                    self._selected_device["native_sample_rate"]
+                    selected_device["native_sample_rate"]
                 )
-                self.window.set_status(f"已写入 config.py (ID: {self._selected_device['device_id']})")
+                self.window.set_status(f"已写入 config.py (ID: {selected_device['device_id']})")
             else:
                 existing_value = self.config_patcher.read_constant(config_path, "TARGET_DEVICE_ID")
                 if existing_value is None:
                     with open(config_path, "a", encoding="utf-8") as f:
-                        f.write(f"\nTARGET_DEVICE_ID = {self._selected_device['device_id']}\n")
-                        f.write(f"SAMPLE_RATE = {self._selected_device['native_sample_rate']}\n")
+                        f.write(f"\nTARGET_DEVICE_ID = {selected_device['device_id']}\n")
+                        f.write(f"SAMPLE_RATE = {selected_device['native_sample_rate']}\n")
                     self.window.set_status("已创建 config.py")
                 else:
                     self.window.set_status("配置写入失败")
