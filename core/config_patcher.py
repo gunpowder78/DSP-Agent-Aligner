@@ -25,7 +25,9 @@ class ConfigPatcher:
             RuntimeError: If patching fails due to other errors
         """
         try:
-            source_code = file_path.read_text(encoding="utf-8")
+            with open(file_path, 'r', encoding='utf-8') as f:
+                source_code = f.read()
+
             tree = ast.parse(source_code)
 
             found = False
@@ -40,10 +42,15 @@ class ConfigPatcher:
                 raise ValueError(f"Constant '{target_name}' not found in file")
 
             modified_code = ast.unparse(tree)
-            file_path.write_text(modified_code, encoding="utf-8")
+
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(modified_code)
+
             return True
         except ValueError:
             raise
+        except PermissionError as e:
+            raise RuntimeError(f"Permission denied: {str(e)}")
         except Exception as e:
             raise RuntimeError(f"Failed to patch constant: {str(e)}")
 
@@ -70,7 +77,9 @@ class ConfigPatcher:
             RuntimeError: If patching fails
         """
         try:
-            source_code = file_path.read_text(encoding="utf-8")
+            with open(file_path, 'r', encoding='utf-8') as f:
+                source_code = f.read()
+
             tree = ast.parse(source_code)
 
             found_dict = False
@@ -98,10 +107,15 @@ class ConfigPatcher:
                 raise ValueError(f"Key '{key_name}' not found in dictionary '{dict_name}'")
 
             modified_code = ast.unparse(tree)
-            file_path.write_text(modified_code, encoding="utf-8")
+
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(modified_code)
+
             return True
         except ValueError:
             raise
+        except PermissionError as e:
+            raise RuntimeError(f"Permission denied: {str(e)}")
         except Exception as e:
             raise RuntimeError(f"Failed to patch dictionary: {str(e)}")
 
@@ -109,7 +123,9 @@ class ConfigPatcher:
     def read_constant(file_path: pathlib.Path, target_name: str) -> Any:
         """Read a constant value from a Python source file using AST."""
         try:
-            source_code = file_path.read_text(encoding="utf-8")
+            with open(file_path, 'r', encoding='utf-8') as f:
+                source_code = f.read()
+
             tree = ast.parse(source_code)
 
             for node in ast.walk(tree):
@@ -137,7 +153,9 @@ class ConfigPatcher:
             The value if found, None otherwise
         """
         try:
-            source_code = file_path.read_text(encoding="utf-8")
+            with open(file_path, 'r', encoding='utf-8') as f:
+                source_code = f.read()
+
             tree = ast.parse(source_code)
 
             for node in ast.walk(tree):
@@ -160,7 +178,8 @@ class ConfigPatcher:
     def validate_syntax(file_path: pathlib.Path) -> bool:
         """Validate Python source file syntax."""
         try:
-            source_code = file_path.read_text(encoding="utf-8")
+            with open(file_path, 'r', encoding='utf-8') as f:
+                source_code = f.read()
             ast.parse(source_code)
             return True
         except SyntaxError:
