@@ -32,6 +32,7 @@ Writing cross-platform audio code (like `pyo` or `sounddevice`) on Windows often
 ### Prerequisites
 - Python 3.11 or higher
 - Windows OS (Optimized for Windows audio subsystem complexities)
+- Conda (recommended for environment management)
 
 ### Installation
 
@@ -56,6 +57,21 @@ Writing cross-platform audio code (like `pyo` or `sounddevice`) on Windows often
    ```bash
    python dsp_aligner_app.py
    ```
+
+### Development Environment
+
+| Component | Specification |
+|-----------|---------------|
+| **Conda Env Name** | `daa` |
+| **Python Version** | 3.11.x |
+| **OS Platform** | Windows |
+| **Audio Subsystem** | WASAPI |
+
+**Core Dependencies:**
+- `customtkinter` >= 5.2.0 - Modern GUI framework
+- `sounddevice` >= 0.4.6 - Cross-platform audio I/O
+- `numpy` >= 1.24.0 - Numerical computing
+- `pytest` >= 7.4.0 - Testing framework
 
 ---
 
